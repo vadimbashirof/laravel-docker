@@ -1,0 +1,104 @@
+version: "3.7"
+services:
+
+  php-fpm:
+    build:
+      args:
+        phpversion: '${PHP_VERSION:-8.2.0}'
+      context: ./docker/php-fpm
+      dockerfile: Dockerfile
+    container_name: '${APP_NAME:-laravel}-php-fpm'
+    working_dir: '/var/www'
+    volumes:
+      - './:/var/www'
+      - './docker/php-fpm/xdebug.ini:/usr/local/etc/php/conf.d/xdebug.ini'
+      - './docker/php-fpm/php.ini:/usr/local/etc/php/php.ini'
+    networks:
+      - laravel
+
+  # Nginx
+  nginx:
+    image: nginx:latest
+    container_name: '${APP_NAME:-laravel}-nginx'
+    restart: unless-stopped
+    ports:
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_NGINX_PORT:-80}:80'
+    environment:
+      NGINX_PORT: '${APP_PORT:-80}'
+      NGINX_HOST: '${APP_DOMAIN:-localhost}'
+    volumes:
+      - './:/var/www'
+      - './docker/nginx/templates:/etc/nginx/templates'
+      - './docker/nginx/nginx.conf:/etc/nginx/nginx.conf'
+    depends_on:
+      - php-fpm
+    networks:
+      - laravel
+
+  # Postgresql
+  pgsql:
+    image: postgres:latest
+    container_name: '${APP_NAME:-laravel}-pgsql'
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: '${DB_PASSWORD:-root}'
+      POSTGRES_DB: '${DB_DATABASE:-laravel}'
+      POSTGRES_USER: '${DB_USERNAME:-root}'
+      POSTGRES_PASSWORD: '${DB_PASSWORD:-root}'
+    ports:
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_DB_PORT:-5432}:5432'
+    volumes:
+      - './docker/postgres/initdb.d:/docker-entrypoint-initdb.d'
+      - '~/Databases/postgresql/${APP_NAME:-laravel}:/var/lib/postgresql/data'
+    networks:
+      - laravel
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "${DB_USERNAME:-root}", "-U", "${DB_USERNAME:-root}"]
+      retries: 3
+      timeout: 5s
+
+  # Redis
+  redis:
+    image: redis:alpine
+    container_name: '${APP_NAME:-laravel}-redis'
+    ports:
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_REDIS_PORT:-6379}:6379'
+    volumes:
+      - './docker/redis/redis.conf:/usr/local/etc/redis/redis.conf'
+    networks:
+      - laravel
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      retries: 3
+      timeout: 5s
+
+  # Adminer
+  adminer:
+    image: adminer
+    container_name: '${APP_NAME:-laravel}-adminer'
+    restart: unless-stopped
+    ports:
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_ADMINER_PORT:-8080}:8080'
+    depends_on:
+      - pgsql
+    environment:
+      ADMINER_DEFAULT_DB_DRIVER: pgsql
+      ADMINER_DEFAULT_SERVER: pgsql
+      ADMINER_DESIGN: hever
+      ADMINER_DEFAULT_DB_NAME: '${DB_DATABASE:-laravel}'
+    networks:
+      - laravel
+
+  # Mailhog
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: '${APP_NAME:-laravel}-mailhog'
+    ports:
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_MAILHOG_PORT:-1025}:1025'
+      - '${FORWARD_HOST:-127.0.0.1}:${FORWARD_MAILHOG_DASHBOARD_PORT:-8025}:8025'
+    networks:
+      - laravel
+
+networks:
+  laravel:
+    driver: bridge
